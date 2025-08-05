@@ -8,6 +8,7 @@
 
 - 对角线提取：给定带缺的 feeder 和 index（支持 shuffle feeder 和 index 的顺序），提取所有可能的单词；
 - 单词查询：单纯的通配符匹配、按照编辑距离查询、按照给定串作为子串查询；
+- 近义词查询：借鉴了 [three-method-to-find-synonyms](https://github.com/NICE-FUTURE/three-method-to-find-synonyms) 的处理方法，但要使用 python 3.7 环境与 tensorflow 1.11.0（我本地设置了一个 conda tf11 专门处理），在这个环境下 `bert-serving-start -model_dir ./chinese_L-12_H-768_A-12/ -num_worker=1` serve 一个模型就可以使用啦。
 - 汉字查询：根据笔画数、声母、韵母、声调、偏旁、“第x笔是xxx”等信息查询，结果按照释义长度降序排序。
 
 TODO：
@@ -24,5 +25,6 @@ TODO：
 - [chinese-xinhua](https://github.com/pwxcoo/chinese-xinhua)
 - [cnchar](https://github.com/theajack/cnchar)
 - [cipher_machine](https://github.com/philippica/cipher_machine)
+- [three-method-to-find-synonyms](https://github.com/NICE-FUTURE/three-method-to-find-synonyms)
 
 本仓库仅供个人使用，无任何商业目的，若造成侵权请联系我删除！
