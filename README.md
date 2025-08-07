@@ -4,18 +4,23 @@
 
 大部分代码以及解释性文字由 AI 完成，因此可能会出现逻辑不通、效率低下、命名混乱等一系列问题。
 
+如何使用？如果本地没有 cache/ 文件夹就先运行 `vocabulary_preprocessor.py`，然后直接运行 `start_app.py` 就行！
+
+（注意，如果要用词意查询功能，请自行用 `compute_embeddings.py` 计算）
+
 目前支持：
 
 - 对角线提取：给定带缺的 feeder 和 index（支持 shuffle feeder 和 index 的顺序），提取所有可能的单词；
 - 单词查询：单纯的通配符匹配、按照编辑距离查询、按照给定串作为子串查询；
-- 近义词查询：借鉴了 [three-method-to-find-synonyms](https://github.com/NICE-FUTURE/three-method-to-find-synonyms) 的处理方法，但要使用 python 3.7 环境与 tensorflow 1.11.0（我本地设置了一个 conda tf11 专门处理），在这个环境下 `bert-serving-start -model_dir ./chinese_L-12_H-768_A-12/ -num_worker=1` serve 一个模型就可以使用啦。
+- 近义词查询：使用了 [Qwen3-Embedding-0.6B](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B) 模型来计算词的 embedding，然后做 knn 查询，我是用了 Qwen3 的 docker 来做，也就是 `docker run --gpus all -p 8080:80 ghcr.io/huggingface/text-embeddings-inference:1.8 --model-id Qwen/Qwen3-Embedding-0.6B` 来跑，同样也加上了字数限制和汉字的限制。
 - 汉字查询：根据笔画数、声母、韵母、声调、偏旁、“第x笔是xxx”等信息查询，结果按照释义长度降序排序。
 
 TODO：
 
 - 对角线提取效率优化；
-- 汉字查询中加入字义排序；
-- 词语、成语查询；
+- 词语查询中具体某一画是 xx 的限制还没写对；
+- 成语查询；
+- `ue/ve` 可能区分上有点问题；
 - 常用提取工具。
 
 ## References
@@ -25,6 +30,5 @@ TODO：
 - [chinese-xinhua](https://github.com/pwxcoo/chinese-xinhua)
 - [cnchar](https://github.com/theajack/cnchar)
 - [cipher_machine](https://github.com/philippica/cipher_machine)
-- [three-method-to-find-synonyms](https://github.com/NICE-FUTURE/three-method-to-find-synonyms)
 
 本仓库仅供个人使用，无任何商业目的，若造成侵权请联系我删除！
