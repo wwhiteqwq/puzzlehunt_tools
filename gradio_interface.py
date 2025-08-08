@@ -41,7 +41,7 @@ def process_qwen_synonym_query(word: str, k: int = 10, character_finals: list = 
 def process_qwen_synonym_query_unified(word: str, k: int = 10, min_length: int = None, max_length: int = None, **kwargs) -> str:
     """处理Qwen统一同义词查询（使用统一的search_synonyms方法）"""
     try:
-        from qwen_synonym_searcher_v3 import QwenSynonymSearcherV3
+        from qwen_synonym_searcher import QwenSynonymSearcherV3
         
         # 提取简单的韵母筛选条件
         character_finals = []
@@ -150,8 +150,81 @@ def process_qwen_synonym_query_unified(word: str, k: int = 10, min_length: int =
         
     except Exception as e:
         return f"❌ 统一查询失败: {str(e)}\n\n💡 已启用统一处理算法，支持纯筛选和语义搜索两种模式"
+
+
+def process_qwen_synonym_query_with_stroke_positions(word: str, k: int = 10, min_length: int = None, max_length: int = None, **kwargs) -> str:
+    """处理带多个笔画位置限制的同义词查询"""
+    try:
+        from qwen_synonym_searcher import QwenSynonymSearcherV3
+        
+        # 构建高级筛选条件
+        character_filters = []
+        
+        for i in range(1, 5):  # 最多支持4个字
+            char_filter = {}
+            
+            # 拼音条件
+            initial = kwargs.get(f'char{i}_initial', '')
+            final = kwargs.get(f'char{i}_final_dropdown', '')
+            tone = kwargs.get(f'char{i}_tone', '')
+            
+            # 字符条件
+            stroke_count = kwargs.get(f'char{i}_stroke_count', 0)
+            radical = kwargs.get(f'char{i}_radical', '')
+            
+            # 笔画位置条件（多个）
+            stroke_conditions = kwargs.get(f'char{i}_stroke_conditions', {})
+            
+            # 添加非空条件
+            if initial:
+                char_filter['initial'] = initial
+            if final:
+                char_filter['final'] = final
+            if tone:
+                char_filter['tone'] = tone
+            if stroke_count and stroke_count > 0:
+                char_filter['stroke_count'] = stroke_count
+            if radical:
+                char_filter['radical'] = radical
+            
+            # 处理多个笔画位置限制
+            if stroke_conditions and isinstance(stroke_conditions, dict):
+                # 将"第X画"格式转换为数字位置的字典
+                stroke_positions = {}
+                for pos_str, stroke_type in stroke_conditions.items():
+                    if pos_str.startswith('第') and pos_str.endswith('画'):
+                        try:
+                            position = int(pos_str[1:-1])  # 提取数字
+                            stroke_positions[position] = stroke_type
+                        except ValueError:
+                            continue
+                
+                if stroke_positions:
+                    char_filter['stroke_positions'] = stroke_positions
+            
+            character_filters.append(char_filter)
+        
+        # 移除末尾的空条件
+        while character_filters and not character_filters[-1]:
+            character_filters.pop()
+        
+        if not character_filters:
+            character_filters = None
+        
+        # 使用统一的search_synonyms方法
+        searcher = QwenSynonymSearcherV3()
+        synonyms, similarities, result_msg = searcher.search_synonyms(
+            word=word, 
+            k=k, 
+            character_filters=character_filters,
+            min_length=min_length,
+            max_length=max_length
+        )
+        
+        return result_msg
+        
     except Exception as e:
-        return f"❌ 查询失败: {str(e)}\n\n💡 请检查筛选条件是否合理，或减少筛选条件重试"
+        return f"❌ 笔画位置查询失败: {str(e)}\n\n💡 请检查笔画位置限制是否合理"
 
 
 def _format_detailed_result(word: str, synonyms: list, similarities: list, result_msg: str, character_filters: list, k: int) -> str:
@@ -625,9 +698,31 @@ def create_interface():
                                         with gr.Row():
                                             char1_stroke_count = gr.Number(label="笔画数", minimum=0, maximum=48, step=1, value=0, precision=0, info="汉字总笔画数，填0表示不限制")
                                             char1_radical = gr.Dropdown(label="部首", choices=available_radicals[:50], value="", info="汉字偏旁部首")
-                                        with gr.Row():
-                                            char1_contains_stroke = gr.Dropdown(label="包含笔画", choices=available_strokes, value="", info="要求包含的笔画类型")
-                                            char1_stroke_position = gr.Number(label="笔画位置", minimum=0, maximum=20, step=1, value=0, precision=0, info="第几笔是上述笔画，0表示任意位置")
+                                        # 多个笔画位置限制
+                                        with gr.Group():
+                                            gr.Markdown("🎯 **笔画位置限制**")
+                                            char1_stroke_conditions_display = gr.Markdown("📝 **当前笔画条件**: 无")
+                                            with gr.Row():
+                                                char1_stroke_position_input = gr.Number(
+                                                    label="笔画位置",
+                                                    minimum=1, maximum=20, step=1, value=1, precision=0,
+                                                    info="第几笔（1-20）"
+                                                )
+                                                char1_stroke_type_input = gr.Dropdown(
+                                                    label="笔画类型",
+                                                    choices=available_strokes,
+                                                    value="",
+                                                    info="选择笔画类型"
+                                                )
+                                            with gr.Row():
+                                                char1_add_stroke_btn = gr.Button("➕ 加入一条限制", variant="secondary", size="sm")
+                                                char1_remove_stroke_dropdown = gr.Dropdown(
+                                                    label="移除条件",
+                                                    choices=[],
+                                                    value=None,
+                                                    info="选择要移除的条件"
+                                                )
+                                                char1_remove_stroke_btn = gr.Button("➖ 移除一条限制", variant="secondary", size="sm")
                                     
                                     with gr.TabItem("第2字条件"):
                                         with gr.Row():
@@ -637,9 +732,31 @@ def create_interface():
                                         with gr.Row():
                                             char2_stroke_count = gr.Number(label="笔画数", minimum=0, maximum=48, step=1, value=0, precision=0, info="汉字总笔画数，填0表示不限制")
                                             char2_radical = gr.Dropdown(label="部首", choices=available_radicals[:50], value="")
-                                        with gr.Row():
-                                            char2_contains_stroke = gr.Dropdown(label="包含笔画", choices=available_strokes, value="")
-                                            char2_stroke_position = gr.Number(label="笔画位置", minimum=0, maximum=20, step=1, value=0, precision=0, info="第几笔是上述笔画，0表示任意位置")
+                                        # 多个笔画位置限制
+                                        with gr.Group():
+                                            gr.Markdown("🎯 **笔画位置限制**")
+                                            char2_stroke_conditions_display = gr.Markdown("📝 **当前笔画条件**: 无")
+                                            with gr.Row():
+                                                char2_stroke_position_input = gr.Number(
+                                                    label="笔画位置",
+                                                    minimum=1, maximum=20, step=1, value=1, precision=0,
+                                                    info="第几笔（1-20）"
+                                                )
+                                                char2_stroke_type_input = gr.Dropdown(
+                                                    label="笔画类型",
+                                                    choices=available_strokes,
+                                                    value="",
+                                                    info="选择笔画类型"
+                                                )
+                                            with gr.Row():
+                                                char2_add_stroke_btn = gr.Button("➕ 加入一条限制", variant="secondary", size="sm")
+                                                char2_remove_stroke_dropdown = gr.Dropdown(
+                                                    label="移除条件",
+                                                    choices=[],
+                                                    value=None,
+                                                    info="选择要移除的条件"
+                                                )
+                                                char2_remove_stroke_btn = gr.Button("➖ 移除一条限制", variant="secondary", size="sm")
                                     
                                     with gr.TabItem("第3字条件"):
                                         with gr.Row():
@@ -649,9 +766,31 @@ def create_interface():
                                         with gr.Row():
                                             char3_stroke_count = gr.Number(label="笔画数", minimum=0, maximum=48, step=1, value=0, precision=0, info="汉字总笔画数，填0表示不限制")
                                             char3_radical = gr.Dropdown(label="部首", choices=available_radicals[:50], value="")
-                                        with gr.Row():
-                                            char3_contains_stroke = gr.Dropdown(label="包含笔画", choices=available_strokes, value="")
-                                            char3_stroke_position = gr.Number(label="笔画位置", minimum=0, maximum=20, step=1, value=0, precision=0, info="第几笔是上述笔画，0表示任意位置")
+                                        # 多个笔画位置限制
+                                        with gr.Group():
+                                            gr.Markdown("🎯 **笔画位置限制**")
+                                            char3_stroke_conditions_display = gr.Markdown("📝 **当前笔画条件**: 无")
+                                            with gr.Row():
+                                                char3_stroke_position_input = gr.Number(
+                                                    label="笔画位置",
+                                                    minimum=1, maximum=20, step=1, value=1, precision=0,
+                                                    info="第几笔（1-20）"
+                                                )
+                                                char3_stroke_type_input = gr.Dropdown(
+                                                    label="笔画类型",
+                                                    choices=available_strokes,
+                                                    value="",
+                                                    info="选择笔画类型"
+                                                )
+                                            with gr.Row():
+                                                char3_add_stroke_btn = gr.Button("➕ 加入一条限制", variant="secondary", size="sm")
+                                                char3_remove_stroke_dropdown = gr.Dropdown(
+                                                    label="移除条件",
+                                                    choices=[],
+                                                    value=None,
+                                                    info="选择要移除的条件"
+                                                )
+                                                char3_remove_stroke_btn = gr.Button("➖ 移除一条限制", variant="secondary", size="sm")
                                     
                                     with gr.TabItem("第4字条件"):
                                         with gr.Row():
@@ -661,9 +800,68 @@ def create_interface():
                                         with gr.Row():
                                             char4_stroke_count = gr.Number(label="笔画数", minimum=0, maximum=48, step=1, value=0, precision=0, info="汉字总笔画数，填0表示不限制")
                                             char4_radical = gr.Dropdown(label="部首", choices=available_radicals[:50], value="")
-                                        with gr.Row():
-                                            char4_contains_stroke = gr.Dropdown(label="包含笔画", choices=available_strokes, value="")
-                                            char4_stroke_position = gr.Number(label="笔画位置", minimum=0, maximum=20, step=1, value=0, precision=0, info="第几笔是上述笔画，0表示任意位置")
+                                        # 多个笔画位置限制
+                                        with gr.Group():
+                                            gr.Markdown("🎯 **笔画位置限制**")
+                                            char4_stroke_conditions_display = gr.Markdown("📝 **当前笔画条件**: 无")
+                                            with gr.Row():
+                                                char4_stroke_position_input = gr.Number(
+                                                    label="笔画位置",
+                                                    minimum=1, maximum=20, step=1, value=1, precision=0,
+                                                    info="第几笔（1-20）"
+                                                )
+                                                char4_stroke_type_input = gr.Dropdown(
+                                                    label="笔画类型",
+                                                    choices=available_strokes,
+                                                    value="",
+                                                    info="选择笔画类型"
+                                                )
+                                            with gr.Row():
+                                                char4_add_stroke_btn = gr.Button("➕ 加入一条限制", variant="secondary", size="sm")
+                                                char4_remove_stroke_dropdown = gr.Dropdown(
+                                                    label="移除条件",
+                                                    choices=[],
+                                                    value=None,
+                                                    info="选择要移除的条件"
+                                                )
+                                                char4_remove_stroke_btn = gr.Button("➖ 移除一条限制", variant="secondary", size="sm")
+                        
+                        # 笔画条件状态管理（为每个字符位置维护独立的笔画条件状态）
+                        char1_stroke_conditions_state = gr.State({})
+                        char2_stroke_conditions_state = gr.State({})
+                        char3_stroke_conditions_state = gr.State({})
+                        char4_stroke_conditions_state = gr.State({})
+                        
+                        # 事件处理函数
+                        def add_char_stroke_condition(position, stroke_type, current_conditions):
+                            """添加字符笔画条件"""
+                            if position is None or not stroke_type:
+                                return current_conditions, "📝 **当前笔画条件**: 请输入笔画位置和选择笔画类型", gr.update(choices=list(current_conditions.keys()))
+                            
+                            # 将数字转换为"第X画"格式用于显示和内部处理
+                            position_key = f"第{int(position)}画"
+                            current_conditions[position_key] = stroke_type
+                            
+                            # 更新显示
+                            if current_conditions:
+                                display_text = "📝 **当前笔画条件**: " + " | ".join([f"{pos}: {stroke}" for pos, stroke in current_conditions.items()])
+                            else:
+                                display_text = "📝 **当前笔画条件**: 无"
+                            
+                            return current_conditions, display_text, gr.update(choices=list(current_conditions.keys()))
+                        
+                        def remove_char_stroke_condition(position_to_remove, current_conditions):
+                            """移除字符笔画条件"""
+                            if position_to_remove and position_to_remove in current_conditions:
+                                del current_conditions[position_to_remove]
+                            
+                            # 更新显示
+                            if current_conditions:
+                                display_text = "📝 **当前笔画条件**: " + " | ".join([f"{pos}: {stroke}" for pos, stroke in current_conditions.items()])
+                            else:
+                                display_text = "📝 **当前笔画条件**: 无"
+                            
+                            return current_conditions, display_text, gr.update(choices=list(current_conditions.keys()), value=None)
                         
                         with gr.Row():
                             synonym_output = gr.Textbox(
@@ -676,23 +874,29 @@ def create_interface():
                         # 同义词查询事件处理
                         def synonym_search_with_all_options(word, k, min_length, max_length,
                                                            char1_final, char2_final, char3_final, char4_final,
-                                                           char1_initial, char1_tone, char1_stroke_count, char1_radical, char1_contains_stroke, char1_stroke_position,
-                                                           char2_initial, char2_tone, char2_stroke_count, char2_radical, char2_contains_stroke, char2_stroke_position,
-                                                           char3_initial, char3_tone, char3_stroke_count, char3_radical, char3_contains_stroke, char3_stroke_position,
-                                                           char4_initial, char4_tone, char4_stroke_count, char4_radical, char4_contains_stroke, char4_stroke_position):
+                                                           char1_initial, char1_tone, char1_stroke_count, char1_radical,
+                                                           char2_initial, char2_tone, char2_stroke_count, char2_radical,
+                                                           char3_initial, char3_tone, char3_stroke_count, char3_radical,
+                                                           char4_initial, char4_tone, char4_stroke_count, char4_radical,
+                                                           char1_stroke_conditions, char2_stroke_conditions, 
+                                                           char3_stroke_conditions, char4_stroke_conditions):
                             """统一的同义词查询处理函数"""
-                            return process_qwen_synonym_query_unified(
+                            return process_qwen_synonym_query_with_stroke_positions(
                                 word=word, k=k, min_length=min_length, max_length=max_length,
                                 char1_final_dropdown=char1_final, char2_final_dropdown=char2_final, 
                                 char3_final_dropdown=char3_final, char4_final_dropdown=char4_final,
                                 char1_initial=char1_initial, char1_tone=char1_tone, char1_stroke_count=char1_stroke_count, 
-                                char1_radical=char1_radical, char1_contains_stroke=char1_contains_stroke, char1_stroke_position=char1_stroke_position,
+                                char1_radical=char1_radical,
                                 char2_initial=char2_initial, char2_tone=char2_tone, char2_stroke_count=char2_stroke_count,
-                                char2_radical=char2_radical, char2_contains_stroke=char2_contains_stroke, char2_stroke_position=char2_stroke_position,
+                                char2_radical=char2_radical,
                                 char3_initial=char3_initial, char3_tone=char3_tone, char3_stroke_count=char3_stroke_count,
-                                char3_radical=char3_radical, char3_contains_stroke=char3_contains_stroke, char3_stroke_position=char3_stroke_position,
+                                char3_radical=char3_radical,
                                 char4_initial=char4_initial, char4_tone=char4_tone, char4_stroke_count=char4_stroke_count,
-                                char4_radical=char4_radical, char4_contains_stroke=char4_contains_stroke, char4_stroke_position=char4_stroke_position
+                                char4_radical=char4_radical,
+                                char1_stroke_conditions=char1_stroke_conditions,
+                                char2_stroke_conditions=char2_stroke_conditions,
+                                char3_stroke_conditions=char3_stroke_conditions,
+                                char4_stroke_conditions=char4_stroke_conditions
                             )
                         
                         synonym_search_btn.click(
@@ -700,10 +904,12 @@ def create_interface():
                             inputs=[
                                 synonym_word_input, synonym_k_slider, min_length_input, max_length_input,
                                 char1_final_dropdown, char2_final_dropdown, char3_final_dropdown, char4_final_dropdown,
-                                char1_initial, char1_tone, char1_stroke_count, char1_radical, char1_contains_stroke, char1_stroke_position,
-                                char2_initial, char2_tone, char2_stroke_count, char2_radical, char2_contains_stroke, char2_stroke_position,
-                                char3_initial, char3_tone, char3_stroke_count, char3_radical, char3_contains_stroke, char3_stroke_position,
-                                char4_initial, char4_tone, char4_stroke_count, char4_radical, char4_contains_stroke, char4_stroke_position
+                                char1_initial, char1_tone, char1_stroke_count, char1_radical,
+                                char2_initial, char2_tone, char2_stroke_count, char2_radical,
+                                char3_initial, char3_tone, char3_stroke_count, char3_radical,
+                                char4_initial, char4_tone, char4_stroke_count, char4_radical,
+                                char1_stroke_conditions_state, char2_stroke_conditions_state,
+                                char3_stroke_conditions_state, char4_stroke_conditions_state
                             ],
                             outputs=synonym_output
                         )
@@ -713,10 +919,15 @@ def create_interface():
                             return (
                                 "", 10, None, None,        # word, k, min_length, max_length
                                 "", "", "", "",            # char finals
-                                "", "", 0, "", "", 0,      # char1 advanced (笔画数重置为0, 笔画位置重置为0)
-                                "", "", 0, "", "", 0,      # char2 advanced (笔画数重置为0, 笔画位置重置为0)
-                                "", "", 0, "", "", 0,      # char3 advanced (笔画数重置为0, 笔画位置重置为0)
-                                "", "", 0, "", "", 0,      # char4 advanced (笔画数重置为0, 笔画位置重置为0)
+                                "", "", 0, "",              # char1 advanced (声母、声调、笔画数、部首)
+                                "", "", 0, "",              # char2 advanced
+                                "", "", 0, "",              # char3 advanced  
+                                "", "", 0, "",              # char4 advanced
+                                {}, {}, {}, {},             # 笔画条件状态重置
+                                "📝 **当前笔画条件**: 无", "📝 **当前笔画条件**: 无",  # 笔画条件显示重置
+                                "📝 **当前笔画条件**: 无", "📝 **当前笔画条件**: 无",
+                                gr.update(choices=[], value=None), gr.update(choices=[], value=None),  # 移除下拉框重置
+                                gr.update(choices=[], value=None), gr.update(choices=[], value=None),
                                 ""                         # output
                             )
                         
@@ -725,12 +936,67 @@ def create_interface():
                             outputs=[
                                 synonym_word_input, synonym_k_slider, min_length_input, max_length_input,
                                 char1_final_dropdown, char2_final_dropdown, char3_final_dropdown, char4_final_dropdown,
-                                char1_initial, char1_tone, char1_stroke_count, char1_radical, char1_contains_stroke, char1_stroke_position,
-                                char2_initial, char2_tone, char2_stroke_count, char2_radical, char2_contains_stroke, char2_stroke_position,
-                                char3_initial, char3_tone, char3_stroke_count, char3_radical, char3_contains_stroke, char3_stroke_position,
-                                char4_initial, char4_tone, char4_stroke_count, char4_radical, char4_contains_stroke, char4_stroke_position,
+                                char1_initial, char1_tone, char1_stroke_count, char1_radical,
+                                char2_initial, char2_tone, char2_stroke_count, char2_radical,
+                                char3_initial, char3_tone, char3_stroke_count, char3_radical,
+                                char4_initial, char4_tone, char4_stroke_count, char4_radical,
+                                char1_stroke_conditions_state, char2_stroke_conditions_state,
+                                char3_stroke_conditions_state, char4_stroke_conditions_state,
+                                char1_stroke_conditions_display, char2_stroke_conditions_display,
+                                char3_stroke_conditions_display, char4_stroke_conditions_display,
+                                char1_remove_stroke_dropdown, char2_remove_stroke_dropdown,
+                                char3_remove_stroke_dropdown, char4_remove_stroke_dropdown,
                                 synonym_output
                             ]
+                        )
+                        
+                        # 为每个字符位置的笔画条件按钮添加事件处理
+                        # 第1字
+                        char1_add_stroke_btn.click(
+                            fn=add_char_stroke_condition,
+                            inputs=[char1_stroke_position_input, char1_stroke_type_input, char1_stroke_conditions_state],
+                            outputs=[char1_stroke_conditions_state, char1_stroke_conditions_display, char1_remove_stroke_dropdown]
+                        )
+                        char1_remove_stroke_btn.click(
+                            fn=remove_char_stroke_condition,
+                            inputs=[char1_remove_stroke_dropdown, char1_stroke_conditions_state],
+                            outputs=[char1_stroke_conditions_state, char1_stroke_conditions_display, char1_remove_stroke_dropdown]
+                        )
+                        
+                        # 第2字
+                        char2_add_stroke_btn.click(
+                            fn=add_char_stroke_condition,
+                            inputs=[char2_stroke_position_input, char2_stroke_type_input, char2_stroke_conditions_state],
+                            outputs=[char2_stroke_conditions_state, char2_stroke_conditions_display, char2_remove_stroke_dropdown]
+                        )
+                        char2_remove_stroke_btn.click(
+                            fn=remove_char_stroke_condition,
+                            inputs=[char2_remove_stroke_dropdown, char2_stroke_conditions_state],
+                            outputs=[char2_stroke_conditions_state, char2_stroke_conditions_display, char2_remove_stroke_dropdown]
+                        )
+                        
+                        # 第3字
+                        char3_add_stroke_btn.click(
+                            fn=add_char_stroke_condition,
+                            inputs=[char3_stroke_position_input, char3_stroke_type_input, char3_stroke_conditions_state],
+                            outputs=[char3_stroke_conditions_state, char3_stroke_conditions_display, char3_remove_stroke_dropdown]
+                        )
+                        char3_remove_stroke_btn.click(
+                            fn=remove_char_stroke_condition,
+                            inputs=[char3_remove_stroke_dropdown, char3_stroke_conditions_state],
+                            outputs=[char3_stroke_conditions_state, char3_stroke_conditions_display, char3_remove_stroke_dropdown]
+                        )
+                        
+                        # 第4字
+                        char4_add_stroke_btn.click(
+                            fn=add_char_stroke_condition,
+                            inputs=[char4_stroke_position_input, char4_stroke_type_input, char4_stroke_conditions_state],
+                            outputs=[char4_stroke_conditions_state, char4_stroke_conditions_display, char4_remove_stroke_dropdown]
+                        )
+                        char4_remove_stroke_btn.click(
+                            fn=remove_char_stroke_condition,
+                            inputs=[char4_remove_stroke_dropdown, char4_stroke_conditions_state],
+                            outputs=[char4_stroke_conditions_state, char4_stroke_conditions_display, char4_remove_stroke_dropdown]
                         )
                         
                         # 同义词查询示例
@@ -769,7 +1035,18 @@ def create_interface():
                         - 查询: `学习` + 第1字包含笔画: `点` → 第一个字包含点画的近义词
                         - 查询: `书法` + 第1字包含笔画: `横` + 第2字包含笔画: `撇` → 笔画特征匹配
                         
-                        **7. 特定位置笔画筛选（精确控制）**:
+                        **7. 多个笔画位置筛选（精确书法控制）**:
+                        - 第1字: ➕ 第1笔=横, ➕ 第2笔=竖 → 找到第1、2笔都符合要求的字符
+                        - 第1字: ➕ 第1笔=横, ➕ 第3笔=点 → 找到第1、3笔都符合要求的字符  
+                        - 第1字: ➕ 第1笔=横, 第2字: ➕ 第1笔=竖 → 两个字符都有特定笔画要求
+                        - 多重限制: 第1字 ➕ 第1笔=横 ➕ 第2笔=竖, 声调=1, 笔画数=8 → 综合筛选
+                        
+                        **🔰 新功能：智能笔画限制系统**:
+                        - **加入限制**: 点击"➕ 加入一条限制"按钮，可为同一个字添加多个笔画位置要求
+                        - **移除限制**: 从下拉框中选择要移除的条件，点击"➖ 移除一条限制"  
+                        - **实时显示**: 当前设置的所有笔画条件会实时显示在界面上
+                        - **灵活组合**: 可与声母、韵母、声调、笔画数、部首等条件自由组合
+                        
                         - 查询: `工作` + 第1字包含笔画: `横` + 第1字笔画位置: `1` → 第一笔是横的近义词
                         - 查询: `学习` + 第2字包含笔画: `竖` + 第2字笔画位置: `3` → 第二字第3笔是竖的近义词
                         
@@ -876,7 +1153,283 @@ def create_interface():
                         - **20%以下**: 很低相似度 (基本无关)
                         """)
             
-            # Tab 4: 中文汉字查询（增强版）
+            # Tab 4: 字谜推理
+            with gr.TabItem("🔍 字谜推理"):
+                gr.Markdown("## 字谜推理工具")
+                gr.Markdown("""
+                **功能说明**: 
+                - **字谜推理**: 根据已知能组词的字来推测未知字
+                - **线索分析**: 输入多个线索字符，系统分析能与这些字符组词的所有可能字符
+                - **智能排序**: 按照匹配度从高到低排序，匹配度越高的字符越可能是答案
+                - **词汇示例**: 每个候选字符都提供具体的组词示例
+                
+                **使用场景**:
+                - 🧩 **字谜游戏**: 根据部分线索推测完整答案
+                - 📚 **词汇扩展**: 发现与已知字符相关的其他字符
+                - 🎯 **文字联想**: 通过字符关联找到相关概念
+                - 🔍 **语言分析**: 研究汉字之间的组词关系
+                """)
+                
+                with gr.Row():
+                    with gr.Column():
+                        gr.Markdown("### 线索字符管理")
+                        
+                        # 当前线索显示
+                        mystery_clues_display = gr.Markdown("📝 **当前线索字符**: 无")
+                        
+                        # 添加线索字符
+                        with gr.Row():
+                            mystery_new_clue_input = gr.Textbox(
+                                label="添加线索字符",
+                                placeholder="输入一个中文字符",
+                                lines=1,
+                                max_lines=1,
+                                scale=2
+                            )
+                            mystery_position_input = gr.Number(
+                                label="位置要求",
+                                placeholder="0=任意位置",
+                                value=0,
+                                minimum=0,
+                                maximum=10,
+                                step=1,
+                                scale=1,
+                                info="0表示任意位置，其他数字表示指定位置"
+                            )
+                            mystery_add_clue_btn = gr.Button("➕ 添加线索", variant="secondary", size="sm", scale=1)
+                        
+                        # 移除线索字符
+                        with gr.Row():
+                            mystery_remove_clue_dropdown = gr.Dropdown(
+                                label="移除线索字符",
+                                choices=[],
+                                value=None,
+                                interactive=True
+                            )
+                            mystery_remove_clue_btn = gr.Button("➖ 移除线索", variant="secondary", size="sm")
+                        
+                        # 控制按钮
+                        with gr.Row():
+                            mystery_max_results_slider = gr.Slider(
+                                minimum=5,
+                                maximum=50,
+                                value=20,
+                                step=1,
+                                label="最大结果数",
+                                info="限制显示的候选字符数量"
+                            )
+                        
+                        with gr.Row():
+                            mystery_analyze_btn = gr.Button("🔍 开始推理", variant="primary", scale=2)
+                            mystery_clear_btn = gr.Button("🧹 清空线索", variant="secondary", scale=1)
+                    
+                    with gr.Column():
+                        gr.Markdown("### 推理结果")
+                        mystery_output = gr.Textbox(
+                            label="字谜推理结果",
+                            lines=25,
+                            interactive=False,
+                            show_copy_button=True
+                        )
+                
+                # 线索状态管理：存储 (字符, 位置) 元组列表
+                mystery_clues_state = gr.State([])
+                
+                # 事件处理函数
+                def add_mystery_clue(new_clue, position, current_clues):
+                    """添加线索字符及其位置要求"""
+                    if not new_clue or not new_clue.strip():
+                        display_text = "📝 **当前线索字符**: " + (
+                            ", ".join([f"{char}(位置:{'任意' if pos == 0 else pos})" for char, pos in current_clues]) 
+                            if current_clues else "无"
+                        )
+                        choices = [f"{char}(位置:{'任意' if pos == 0 else pos})" for char, pos in current_clues]
+                        return current_clues, display_text, gr.update(choices=choices), ""
+                    
+                    # 验证是否为单个中文字符
+                    clue_char = new_clue.strip()
+                    if len(clue_char) != 1:
+                        display_text = "📝 **当前线索字符**: " + (
+                            ", ".join([f"{char}(位置:{'任意' if pos == 0 else pos})" for char, pos in current_clues]) 
+                            if current_clues else "无"
+                        ) + "\n⚠️ 请输入单个字符"
+                        choices = [f"{char}(位置:{'任意' if pos == 0 else pos})" for char, pos in current_clues]
+                        return current_clues, display_text, gr.update(choices=choices), ""
+                    
+                    if not '\u4e00' <= clue_char <= '\u9fff':
+                        display_text = "📝 **当前线索字符**: " + (
+                            ", ".join([f"{char}(位置:{'任意' if pos == 0 else pos})" for char, pos in current_clues]) 
+                            if current_clues else "无"
+                        ) + "\n⚠️ 请输入中文字符"
+                        choices = [f"{char}(位置:{'任意' if pos == 0 else pos})" for char, pos in current_clues]
+                        return current_clues, display_text, gr.update(choices=choices), ""
+                    
+                    # 确保位置是有效的整数
+                    try:
+                        pos = int(position) if position is not None else 0
+                        if pos < 0:
+                            pos = 0
+                    except:
+                        pos = 0
+                    
+                    # 检查是否已存在相同的字符和位置组合
+                    if (clue_char, pos) in current_clues:
+                        display_text = "📝 **当前线索字符**: " + ", ".join([
+                            f"{char}(位置:{'任意' if p == 0 else p})" for char, p in current_clues
+                        ]) + f"\n⚠️ 线索 '{clue_char}(位置:{'任意' if pos == 0 else pos})' 已存在"
+                        choices = [f"{char}(位置:{'任意' if p == 0 else p})" for char, p in current_clues]
+                        return current_clues, display_text, gr.update(choices=choices), ""
+                    
+                    # 添加到线索列表
+                    updated_clues = current_clues + [(clue_char, pos)]
+                    display_text = "📝 **当前线索字符**: " + ", ".join([
+                        f"{char}(位置:{'任意' if p == 0 else p})" for char, p in updated_clues
+                    ])
+                    choices = [f"{char}(位置:{'任意' if p == 0 else p})" for char, p in updated_clues]
+                    
+                    return updated_clues, display_text, gr.update(choices=choices), ""
+                
+                def remove_mystery_clue(clue_to_remove, current_clues):
+                    """移除线索字符"""
+                    if clue_to_remove:
+                        # 从显示文本中解析出要删除的线索
+                        for i, (char, pos) in enumerate(current_clues):
+                            display_format = f"{char}(位置:{'任意' if pos == 0 else pos})"
+                            if display_format == clue_to_remove:
+                                updated_clues = current_clues[:i] + current_clues[i+1:]
+                                display_text = "📝 **当前线索字符**: " + (
+                                    ", ".join([f"{c}(位置:{'任意' if p == 0 else p})" for c, p in updated_clues]) 
+                                    if updated_clues else "无"
+                                )
+                                choices = [f"{c}(位置:{'任意' if p == 0 else p})" for c, p in updated_clues]
+                                return updated_clues, display_text, gr.update(choices=choices, value=None)
+                    
+                    display_text = "📝 **当前线索字符**: " + (
+                        ", ".join([f"{char}(位置:{'任意' if pos == 0 else pos})" for char, pos in current_clues]) 
+                        if current_clues else "无"
+                    )
+                    choices = [f"{char}(位置:{'任意' if pos == 0 else pos})" for char, pos in current_clues]
+                    return current_clues, display_text, gr.update(choices=choices, value=None)
+                
+                def analyze_mystery(clues, max_results):
+                    """执行字谜推理分析"""
+                    if not clues:
+                        return "❌ 请至少添加一个线索字符"
+                    
+                    try:
+                        # 分离字符和位置
+                        clue_chars = [char for char, pos in clues]
+                        clue_positions = [pos for char, pos in clues]
+                        
+                        from mystery_wrapper import process_character_mystery_with_positions
+                        return process_character_mystery_with_positions(clue_chars, clue_positions, max_results)
+                    except Exception as e:
+                        return f"❌ 分析失败: {str(e)}"
+                
+                def clear_mystery_clues():
+                    """清空所有线索"""
+                    return [], "📝 **当前线索字符**: 无", gr.update(choices=[], value=None), ""
+                
+                # 绑定事件
+                mystery_add_clue_btn.click(
+                    fn=add_mystery_clue,
+                    inputs=[mystery_new_clue_input, mystery_position_input, mystery_clues_state],
+                    outputs=[mystery_clues_state, mystery_clues_display, mystery_remove_clue_dropdown, mystery_new_clue_input]
+                )
+                
+                mystery_remove_clue_btn.click(
+                    fn=remove_mystery_clue,
+                    inputs=[mystery_remove_clue_dropdown, mystery_clues_state],
+                    outputs=[mystery_clues_state, mystery_clues_display, mystery_remove_clue_dropdown]
+                )
+                
+                mystery_analyze_btn.click(
+                    fn=analyze_mystery,
+                    inputs=[mystery_clues_state, mystery_max_results_slider],
+                    outputs=mystery_output
+                )
+                
+                mystery_clear_btn.click(
+                    fn=clear_mystery_clues,
+                    outputs=[mystery_clues_state, mystery_clues_display, mystery_remove_clue_dropdown, mystery_output]
+                )
+                
+                # 字谜推理示例
+                gr.Markdown("### 使用示例")
+                gr.Markdown("""
+                **🔰 基础使用**:
+                - 添加线索字符: `天`, `地` (位置设为0表示任意位置)
+                - 点击"开始推理"
+                - 查看结果: `情`(2次), `己`(2次), `吁`(2次)...
+                
+                **🎯 位置功能**:
+                - 添加线索字符: `痛` (位置设为1表示必须在第1位)
+                - 推理结果: `心`(痛心), `风`(痛风), `恨`(痛恨)...
+                - 位置限制大大提高了推理精度
+                
+                **📚 实际案例**:
+                
+                **案例1 - 猜字谜（任意位置）**:
+                ```
+                线索: 日(位置:任意), 月(位置:任意), 星(位置:任意)
+                分析: 寻找能与"日"、"月"、"星"组词的字符
+                结果: 辰(日月星辰), 光(日光、月光、星光), 空(...)
+                ```
+                
+                **案例2 - 精确位置推理**:
+                ```
+                线索: 痛(位置:1)
+                分析: "痛"必须在词汇的第1位
+                结果: 心(痛心), 风(痛风), 恨(痛恨), 击(痛击)
+                高精度: 所有结果都是"痛X"格式
+                ```
+                
+                **案例3 - 混合位置要求**:
+                ```
+                线索: 不(位置:2), 生(位置:4)  
+                分析: "不"在第2位，"生"在第4位
+                结果: 可能找到"X不X生"格式的词汇
+                ```
+                
+                **案例4 - 成语填空**:
+                ```
+                线索: 天(位置:1), 利(位置:4)  
+                分析: "天X地利"格式
+                结果: 时(天时地利)
+                ```
+                
+                **💡 使用技巧**:
+                
+                1. **线索质量**: 
+                   - 选择常用字符作为线索效果更好
+                   - 线索字符之间最好有一定关联性
+                   - 避免使用生僻字作为线索
+                
+                2. **位置设置**:
+                   - **位置=0**: 字符可在词汇任意位置（默认）
+                   - **位置=1**: 字符必须在词汇第1位
+                   - **位置=2**: 字符必须在词汇第2位
+                   - **位置越精确，结果越准确但数量越少**
+                
+                3. **结果解读**:
+                   - **匹配度**: 数字表示该字符满足多少个线索要求
+                   - **示例词汇**: 展示具体的组词情况，帮助判断是否符合预期
+                   - **排序**: 结果按匹配度从高到低排序
+                
+                4. **策略建议**:
+                   - 从少量线索开始，逐步增加
+                   - 先用任意位置(0)探索，再用精确位置细化
+                   - 观察高匹配度字符的词汇示例
+                   - 结合具体语境判断最符合的答案
+                
+                **⚠️ 注意事项**:
+                - 每次只能添加一个字符作为线索
+                - 重复的线索字符会被自动过滤
+                - 推理结果基于词典中的组词关系
+                - 匹配度仅供参考，需结合实际语境判断
+                """)
+            
+            # Tab 5: 中文汉字查询（增强版）
             with gr.TabItem("🇨🇳 中文汉字查询"):
                 gr.Markdown("## 中文汉字拼音和笔画查询系统")
                 gr.Markdown("支持多种查询条件组合：笔画数(可选)、声母、韵母、音调、笔画序列、偏旁部首")

@@ -21,9 +21,15 @@ def main():
         print("      - 🎯 二分查找优化：毫秒级韵母筛选，性能提升千倍")
         print("      - 🧠 Qwen3-Embedding：1024维语义向量，精准相似度计算")
         print("      - 🎵 押韵创作支持：23种声母+32种韵母筛选，诗词对仗工整")
-        print("      - � 长度筛选支持：可设置最小/最大字符数，精确控制词汇长度")
-        print("      - �📚 海量词库：25万+词汇覆盖，支持任意中文词汇")
+        print("      - 📏 长度筛选支持：可设置最小/最大字符数，精确控制词汇长度")
+        print("      - 📚 海量词库：25万+词汇覆盖，支持任意中文词汇")
         print("      - ✅ 高级验证修复：声母'g'等字符正确处理，筛选结果准确")
+        print("   🔍 字谜推理器")
+        print("      - 🧩 智能推理：根据线索字符推测目标字符")
+        print("      - 📊 匹配分析：统计字符组词频率，准确性排序")
+        print("      - 🎯 多线索支持：支持多个线索字符组合分析")
+        print("      - 📚 词汇示例：提供具体组词示例，验证推理结果")
+        print("      - 🔬 语言研究：分析汉字组词关系和语言规律")
         print("   🇨🇳 中文汉字查询(增强版)")
         print("      - 偏旁按字数量排序，常用偏旁优先")
         print("      - 笔画数可选，笔画位置数字输入")
@@ -34,12 +40,12 @@ def main():
         try:
             # 尝试直接导入（推荐方式）
             from gradio_interface import create_interface
-        except ImportError as e1:
+        except ImportError:
             # 如果失败，尝试包导入
             try:
                 from mytools.gradio_interface import create_interface
-            except ImportError as e2:
-                print(f"❌ 模块导入失败: {e1},{e2}]")
+            except ImportError as e:
+                print(f"❌ 模块导入失败: {e}")
                 print("请确保在正确的目录下运行脚本")
                 return
         

@@ -30,8 +30,13 @@ class VocabularyPreprocessor:
         self.words_by_initial: Dict[str, List[str]] = {}  # 按声母索引
         self.words_by_final: Dict[str, List[str]] = {}    # 按韵母索引
         self.words_by_length: Dict[int, List[str]] = {}   # 按长度索引
+        self.words_by_stroke_count: Dict[int, List[str]] = {}  # 按笔画数索引
+        self.words_by_radical: Dict[str, List[str]] = {}  # 按部首索引
+        self.words_by_tone: Dict[str, List[str]] = {}     # 按声调索引
         self.sorted_words_by_pinyin: List[Tuple[str, str]] = []  # (word, pinyin) 按拼音排序
         self.sorted_words_by_reversed_pinyin: List[Tuple[str, str]] = []  # 按反向拼音排序
+        self.sorted_words_by_stroke_count: List[Tuple[str, int]] = []  # (word, total_strokes) 按笔画数排序
+        self.sorted_words_by_radical: List[Tuple[str, str]] = []  # (word, radical) 按部首排序
         
         # 自动预处理词库数据
         self.preprocess_vocabulary()
@@ -71,7 +76,7 @@ class VocabularyPreprocessor:
     def _process_ci_data(self) -> bool:
         """处理词库数据(ci.json)"""
         try:
-            ci_path = Path("ci.json")
+            ci_path = Path("chinese/chinese-xinhua/data/ci.json")
             if not ci_path.exists():
                 print(f"[WARNING] 未找到词库文件: {ci_path}")
                 return False
@@ -104,7 +109,7 @@ class VocabularyPreprocessor:
         """处理字符数据"""
         try:
             # 尝试从拼音搜索器获取字符信息
-            from pinyin_searcher import PinyinSearcher
+            from chinese.src.pinyin_searcher import PinyinSearcher
             
             searcher = PinyinSearcher()
             
@@ -116,14 +121,24 @@ class VocabularyPreprocessor:
                 
                 char = word_data.get('word')
                 if len(char) == 1:  # 只处理单字符
+                    stroke_str = word_data.get('strokes', '0')
+                    try:
+                        stroke_int = int(stroke_str)
+                    except (ValueError, TypeError):
+                        stroke_int = 0
+                    
                     self.character_info[char] = {
                         'pinyin': word_data.get('pinyin', ''),
                         'pinyin_list': word_data.get('pinyin_list', []),
-                        'stroke': word_data.get('stroke', 0),
-                        'radical': word_data.get('radical', ''),
+                        'strokes': stroke_int,  # 统一使用strokes字段名
+                        'radical': word_data.get('radicals', ''),  # 修正字段名：radical -> radicals
                         'order_simple': word_data.get('order_simple', [])
                     }
                     processed_count += 1
+                    
+                    # 调试信息：显示前几个字符的处理结果
+                    if processed_count <= 5:
+                        print(f"   调试 - 字符{char}: strokes='{stroke_str}' -> strokes={stroke_int}")
             
             print(f"   处理字符: {processed_count} 个")
             return True
@@ -177,12 +192,13 @@ class VocabularyPreprocessor:
         """构建高效查询索引"""
         print("[INFO] 构建查询索引...")
         
-        # 按声母索引
+        # 清空所有索引
         self.words_by_initial.clear()
-        # 按韵母索引  
         self.words_by_final.clear()
-        # 按长度索引
         self.words_by_length.clear()
+        self.words_by_stroke_count.clear()
+        self.words_by_radical.clear()
+        self.words_by_tone.clear()
         
         # 拼音排序列表
         pinyin_word_pairs = []
@@ -201,12 +217,32 @@ class VocabularyPreprocessor:
                 self.words_by_length[word_len] = []
             self.words_by_length[word_len].append(word)
             
-            # 解析拼音获取声母和韵母
+            # 按笔画数索引（第一个字的笔画数）
+            if word:
+                first_char = word[0]
+                char_info = self.character_info.get(first_char, {})
+                stroke_count = char_info.get('strokes', 0)  # 使用strokes字段
+                if stroke_count > 0:
+                    if stroke_count not in self.words_by_stroke_count:
+                        self.words_by_stroke_count[stroke_count] = []
+                    self.words_by_stroke_count[stroke_count].append(word)
+            
+            # 按部首索引（第一个字的部首）
+            if word:
+                first_char = word[0]
+                char_info = self.character_info.get(first_char, {})
+                radical = char_info.get('radical', '')
+                if radical:
+                    if radical not in self.words_by_radical:
+                        self.words_by_radical[radical] = []
+                    self.words_by_radical[radical].append(word)
+            
+            # 解析拼音获取声母、韵母、声调
             pinyin_parts = pinyin.split()
             if not pinyin_parts:
                 continue
             
-            # 第一个字的声母和韵母用于快速筛选
+            # 第一个字的声母、韵母、声调用于快速筛选
             first_pinyin = pinyin_parts[0].strip()
             if first_pinyin:
                 # 提取声母和韵母
@@ -223,10 +259,20 @@ class VocabularyPreprocessor:
                     self.words_by_final[final] = []
                 if final:
                     self.words_by_final[final].append(word)
+                
+                # 按声调索引（第一个字的声调）
+                tone = self._extract_tone(first_pinyin)
+                if tone:
+                    if tone not in self.words_by_tone:
+                        self.words_by_tone[tone] = []
+                    self.words_by_tone[tone].append(word)
             
             # 为二分查找准备排序数据
             pinyin_word_pairs.append((word, pinyin))
-            reversed_pinyin_word_pairs.append((word, pinyin[::-1]))  # 反向拼音
+            
+            # 构建反向拼音：每个字符位置反转，但保持字符顺序
+            reversed_pinyin = self._build_reversed_pinyin(pinyin_parts)
+            reversed_pinyin_word_pairs.append((word, reversed_pinyin))
         
         # 按拼音排序（用于声母二分查找）
         self.sorted_words_by_pinyin = sorted(pinyin_word_pairs, key=lambda x: x[1])
@@ -234,10 +280,41 @@ class VocabularyPreprocessor:
         # 按反向拼音排序（用于韵母二分查找）
         self.sorted_words_by_reversed_pinyin = sorted(reversed_pinyin_word_pairs, key=lambda x: x[1])
         
+        # 预计算笔画数排序数据
+        print("[INFO] 预计算笔画数排序...")
+        stroke_word_pairs = []
+        for word in self.word_pinyin_pairs:
+            total_strokes = 0
+            for char in word:
+                char_info = self.character_info.get(char, {})
+                total_strokes += char_info.get('strokes', 0)  # 使用strokes字段
+            stroke_word_pairs.append((word, total_strokes))
+        
+        # 按总笔画数排序
+        self.sorted_words_by_stroke_count = sorted(stroke_word_pairs, key=lambda x: x[1])
+        
+        # 预计算部首排序数据
+        print("[INFO] 预计算部首排序...")
+        radical_word_pairs = []
+        for word in self.word_pinyin_pairs:
+            if word:
+                first_char = word[0]
+                char_info = self.character_info.get(first_char, {})
+                radical = char_info.get('radical', '')
+                radical_word_pairs.append((word, radical))
+        
+        # 按首字部首排序
+        self.sorted_words_by_radical = sorted(radical_word_pairs, key=lambda x: x[1])
+        
         print(f"   声母索引: {len(self.words_by_initial)} 种")
-        print(f"   韵母索引: {len(self.words_by_final)} 种")
+        print(f"   韵母索引: {len(self.words_by_final)} 种") 
         print(f"   长度索引: {len(self.words_by_length)} 种")
+        print(f"   笔画索引: {len(self.words_by_stroke_count)} 种")
+        print(f"   部首索引: {len(self.words_by_radical)} 种")
+        print(f"   声调索引: {len(self.words_by_tone)} 种")
         print(f"   拼音排序: {len(self.sorted_words_by_pinyin)} 个词")
+        print(f"   笔画排序: {len(self.sorted_words_by_stroke_count)} 个词")
+        print(f"   部首排序: {len(self.sorted_words_by_radical)} 个词")
     
     def _extract_initial_final(self, pinyin: str) -> Tuple[str, str]:
         """从拼音中提取声母和韵母（与pinyin_tools.py保持一致）"""
@@ -275,6 +352,33 @@ class VocabularyPreprocessor:
         
         return initial, final
     
+    def _extract_tone(self, pinyin: str) -> str:
+        """从拼音中提取声调"""
+        # 声调符号映射
+        tone_map = {
+            'ā': '1', 'á': '2', 'ǎ': '3', 'à': '4',
+            'ē': '1', 'é': '2', 'ě': '3', 'è': '4', 
+            'ī': '1', 'í': '2', 'ǐ': '3', 'ì': '4',
+            'ō': '1', 'ó': '2', 'ǒ': '3', 'ò': '4',
+            'ū': '1', 'ú': '2', 'ǔ': '3', 'ù': '4',
+            'ǖ': '1', 'ǘ': '2', 'ǚ': '3', 'ǜ': '4',
+            'ń': '2', 'ň': '3', 'ǹ': '4',
+            'ḿ': '2', 'ň': '3', 'ǹ': '4'
+        }
+        
+        # 检查声调符号
+        for char in pinyin:
+            if char in tone_map:
+                return tone_map[char]
+        
+        # 检查数字声调（如xue2）
+        import re
+        tone_match = re.search(r'(\d)$', pinyin)
+        if tone_match:
+            return tone_match.group(1)
+        
+        return '5'  # 轻声或无声调
+    
     def _save_to_cache(self):
         """保存到缓存文件"""
         try:
@@ -290,8 +394,13 @@ class VocabularyPreprocessor:
                 'words_by_initial': self.words_by_initial,
                 'words_by_final': self.words_by_final,
                 'words_by_length': self.words_by_length,
+                'words_by_stroke_count': self.words_by_stroke_count,
+                'words_by_radical': self.words_by_radical,
+                'words_by_tone': self.words_by_tone,
                 'sorted_words_by_pinyin': self.sorted_words_by_pinyin,
-                'sorted_words_by_reversed_pinyin': self.sorted_words_by_reversed_pinyin
+                'sorted_words_by_reversed_pinyin': self.sorted_words_by_reversed_pinyin,
+                'sorted_words_by_stroke_count': self.sorted_words_by_stroke_count,
+                'sorted_words_by_radical': self.sorted_words_by_radical
             }
             with open(index_cache, 'wb') as f:
                 pickle.dump(index_data, f)
@@ -321,8 +430,13 @@ class VocabularyPreprocessor:
                 self.words_by_initial = index_data.get('words_by_initial', {})
                 self.words_by_final = index_data.get('words_by_final', {})
                 self.words_by_length = index_data.get('words_by_length', {})
+                self.words_by_stroke_count = index_data.get('words_by_stroke_count', {})
+                self.words_by_radical = index_data.get('words_by_radical', {})
+                self.words_by_tone = index_data.get('words_by_tone', {})
                 self.sorted_words_by_pinyin = index_data.get('sorted_words_by_pinyin', [])
                 self.sorted_words_by_reversed_pinyin = index_data.get('sorted_words_by_reversed_pinyin', [])
+                self.sorted_words_by_stroke_count = index_data.get('sorted_words_by_stroke_count', [])
+                self.sorted_words_by_radical = index_data.get('sorted_words_by_radical', [])
             
             return True
             
@@ -342,6 +456,18 @@ class VocabularyPreprocessor:
         """获取所有词汇"""
         return list(self.word_pinyin_pairs.keys())
     
+    def filter_words_by_stroke_count_fast(self, stroke_count: int) -> List[str]:
+        """按笔画数快速筛选词汇（第一个字的笔画数）"""
+        return self.words_by_stroke_count.get(stroke_count, [])
+    
+    def filter_words_by_radical_fast(self, radical: str) -> List[str]:
+        """按部首快速筛选词汇（第一个字的部首）"""
+        return self.words_by_radical.get(radical, [])
+    
+    def filter_words_by_tone_fast(self, tone: str) -> List[str]:
+        """按声调快速筛选词汇（第一个字的声调）"""
+        return self.words_by_tone.get(tone, [])
+    
     def filter_words_by_length(self, min_length: int = 2, max_length: int = 10) -> List[str]:
         """按长度筛选词汇"""
         result = []
@@ -354,8 +480,8 @@ class VocabularyPreprocessor:
         return self.words_by_initial.get(initial, [])
     
     def filter_words_by_final_fast(self, final: str) -> List[str]:
-        """快速按韵母筛选词汇（支持标准化查找）"""
-        # 直接查找
+        """快速按韵母筛选词汇（使用真正的二分搜索）"""
+        # 优先尝试索引查找（最快）
         if final in self.words_by_final:
             return self.words_by_final[final]
         
@@ -374,7 +500,12 @@ class VocabularyPreprocessor:
         }
         
         unicode_final = final_mappings.get(final, final)
-        return self.words_by_final.get(unicode_final, [])
+        if unicode_final in self.words_by_final:
+            return self.words_by_final[unicode_final]
+        
+        # 使用二分搜索在reverse拼音中查找韵母
+        print(f"   使用二分搜索查找韵母: {final}")
+        return self._binary_search_by_final(final)
     
     def filter_words_by_character_finals_fast(self, character_finals: List[str]) -> List[str]:
         """
@@ -431,7 +562,218 @@ class VocabularyPreprocessor:
         
         return result
     
-    def binary_search_by_pinyin_prefix(self, prefix: str, reverse: bool = False) -> List[str]:
+    def _binary_search_by_final(self, final: str) -> List[str]:
+        """
+        使用二分搜索在反向拼音中查找韵母
+        这是真正的二分搜索实现，查找效率O(log n)
+        """
+        import bisect
+        
+        if not self.sorted_words_by_reversed_pinyin or not final:
+            return []
+        
+        print(f"     在{len(self.sorted_words_by_reversed_pinyin)}个反向拼音中二分查找韵母'{final}'")
+        
+        # 标准化目标韵母
+        normalized_final = self._normalize_final(final)
+        
+        # 提取反向拼音列表用于二分查找
+        reversed_pinyins = [item[1] for item in self.sorted_words_by_reversed_pinyin]
+        
+        # 二分查找第一个匹配的位置
+        # 查找以韵母开头的反向拼音
+        left = bisect.bisect_left(reversed_pinyins, normalized_final)
+        
+        # 查找最后一个匹配的位置
+        # 使用字符递增技巧找到范围结束
+        if normalized_final:
+            next_char = normalized_final[:-1] + chr(ord(normalized_final[-1]) + 1)
+        else:
+            next_char = 'z'
+        right = bisect.bisect_left(reversed_pinyins, next_char)
+        
+        result = []
+        
+        # 在二分查找范围内验证匹配
+        for i in range(left, right):
+            if i >= len(self.sorted_words_by_reversed_pinyin):
+                break
+                
+            word, reversed_pinyin = self.sorted_words_by_reversed_pinyin[i]
+            
+            # 检查反向拼音是否以韵母开头
+            if reversed_pinyin.startswith(normalized_final):
+                # 进一步验证：检查实际韵母
+                pinyins = self.get_word_pinyin(word)
+                if pinyins:
+                    pinyin_parts = pinyins[0].split()
+                    if pinyin_parts:
+                        # 检查第一个字符的韵母
+                        _, actual_final = self._extract_initial_final(pinyin_parts[0])
+                        if self._normalize_final(actual_final) == normalized_final:
+                            result.append(word)
+            elif not reversed_pinyin.startswith(normalized_final[:1]):
+                # 如果连第一个字符都不匹配，可以提前退出
+                break
+        
+        print(f"     二分搜索结果: {len(result)} 个匹配词汇")
+        return result
+    
+    def _normalize_final(self, final: str) -> str:
+        """标准化韵母格式以支持灵活匹配"""
+        if not final:
+            return ''
+        # 处理Unicode ɡ字符
+        normalized = final.replace('ɡ', 'g')
+        # 处理ue <-> ve双向转换
+        if normalized == 've':
+            normalized = 'ue'
+        return normalized
+    
+    def _build_reversed_pinyin(self, pinyin_parts: List[str]) -> str:
+        """
+        构建用于韵母二分查找的反向拼音字符串
+        
+        例如：['gao', 'xing'] -> 'ao_ing'
+        这样韵母在前面，便于韵母的二分查找
+        
+        Args:
+            pinyin_parts: 词汇的各字符拼音列表
+            
+        Returns:
+            反向拼音字符串，韵母在前
+        """
+        reversed_parts = []
+        
+        for pinyin in pinyin_parts:
+            if pinyin:
+                initial, final = self._extract_initial_final(pinyin.strip())
+                # 构建：韵母_声母的格式，便于韵母查找
+                if final:
+                    if initial:
+                        reversed_parts.append(f"{final}_{initial}")
+                    else:
+                        reversed_parts.append(final)
+                else:
+                    # 如果没有韵母，保持原拼音
+                    reversed_parts.append(pinyin.strip())
+        
+        return ' '.join(reversed_parts)
+    
+    def binary_search_by_stroke_count(self, stroke_count: int) -> List[str]:
+        """
+        使用二分搜索按笔画数快速查找词汇
+        
+        Args:
+            stroke_count: 目标笔画数（总笔画数）
+            
+        Returns:
+            匹配的词汇列表
+        """
+        import bisect
+        
+        if not self.sorted_words_by_stroke_count:
+            print("[WARNING] 笔画排序数据不存在，回退到慢速查找")
+            return self.filter_words_by_stroke_count_fast(stroke_count)
+        
+        print(f"   使用二分搜索查找总笔画数为{stroke_count}的词汇")
+        
+        # 提取笔画数列表用于二分查找
+        stroke_counts = [item[1] for item in self.sorted_words_by_stroke_count]
+        
+        # 二分查找第一个匹配的位置
+        left = bisect.bisect_left(stroke_counts, stroke_count)
+        
+        # 二分查找最后一个匹配的位置
+        right = bisect.bisect_right(stroke_counts, stroke_count)
+        
+        # 提取匹配的词汇
+        result = []
+        for i in range(left, right):
+            if i < len(self.sorted_words_by_stroke_count):
+                word, actual_strokes = self.sorted_words_by_stroke_count[i]
+                if actual_strokes == stroke_count:
+                    result.append(word)
+        
+        print(f"   二分搜索结果: {len(result)} 个匹配词汇")
+        return result
+    
+    def binary_search_by_character_stroke_count(self, character_position: int, stroke_count: int) -> List[str]:
+        """
+        使用二分搜索查找指定位置字符有指定笔画数的词汇
+        
+        Args:
+            character_position: 字符位置（0开始）
+            stroke_count: 字符笔画数
+            
+        Returns:
+            匹配的词汇列表
+        """
+        print(f"   二分搜索第{character_position+1}个字有{stroke_count}画的词汇")
+        
+        # 对于字符级别的筛选，我们需要遍历但可以优化
+        # 首先尝试从已排序的数据中快速筛选
+        if character_position == 0:
+            # 第一个字的笔画数，可以直接使用索引
+            return self.filter_words_by_stroke_count_fast(stroke_count)
+        
+        # 对于非第一个字符，需要逐个检查，但可以并行化
+        matching_words = []
+        total_checked = 0
+        
+        for word in self.word_pinyin_pairs:
+            total_checked += 1
+            if total_checked % 50000 == 0:
+                print(f"     已检查 {total_checked} 个词汇...")
+            
+            if len(word) <= character_position:
+                continue
+                
+            char = word[character_position]
+            char_info = self.character_info.get(char, {})
+            if char_info.get('strokes', 0) == stroke_count:  # 使用strokes字段
+                matching_words.append(word)
+        
+        print(f"   找到 {len(matching_words)} 个匹配的词汇")
+        return matching_words
+    
+    def binary_search_by_radical(self, radical: str) -> List[str]:
+        """
+        使用二分搜索按部首查找词汇
+        
+        Args:
+            radical: 目标部首
+            
+        Returns:
+            匹配的词汇列表
+        """
+        import bisect
+        
+        if not self.sorted_words_by_radical:
+            print("[WARNING] 部首排序数据不存在，回退到索引查找")
+            return self.filter_words_by_radical_fast(radical)
+        
+        print(f"   使用二分搜索查找部首为'{radical}'的词汇")
+        
+        # 提取部首列表用于二分查找
+        radicals = [item[1] for item in self.sorted_words_by_radical]
+        
+        # 二分查找第一个匹配的位置
+        left = bisect.bisect_left(radicals, radical)
+        
+        # 二分查找最后一个匹配的位置
+        right = bisect.bisect_right(radicals, radical)
+        
+        # 提取匹配的词汇
+        result = []
+        for i in range(left, right):
+            if i < len(self.sorted_words_by_radical):
+                word, actual_radical = self.sorted_words_by_radical[i]
+                if actual_radical == radical:
+                    result.append(word)
+        
+        print(f"   二分搜索结果: {len(result)} 个匹配词汇")
+        return result
         """
         使用二分查找按拼音前缀快速筛选
         
@@ -466,6 +808,155 @@ class VocabularyPreprocessor:
                 result.append(target_list[i][0])
         
         return result
+    
+    def get_words_sorted_by_pinyin(self) -> List[str]:
+        """获取按拼音排序的词汇列表"""
+        if not self.sorted_words_by_pinyin:
+            # 构建按拼音排序的词汇列表
+            word_pinyin_list = []
+            for word in self.word_pinyin_pairs:
+                pinyins = self.get_word_pinyin(word)
+                if pinyins:
+                    # 使用首个拼音作为排序键
+                    pinyin_key = pinyins[0] if isinstance(pinyins[0], str) else str(pinyins[0])
+                    word_pinyin_list.append((word, pinyin_key))
+            
+            # 按拼音排序
+            word_pinyin_list.sort(key=lambda x: x[1])
+            self.sorted_words_by_pinyin = word_pinyin_list
+        
+        return [item[0] for item in self.sorted_words_by_pinyin]
+    
+    def get_words_sorted_by_stroke_count(self) -> List[str]:
+        """获取按笔画数排序的词汇列表（使用预计算缓存）"""
+        if self.sorted_words_by_stroke_count:
+            # 使用预计算的排序数据，直接返回词汇列表
+            return [item[0] for item in self.sorted_words_by_stroke_count]
+        
+        # 兜底：如果缓存数据不存在，则实时计算（但会很慢）
+        print("[WARNING] 笔画排序缓存不存在，实时计算中...")
+        word_stroke_list = []
+        for word in self.word_pinyin_pairs:
+            total_strokes = 0
+            for char in word:
+                char_info = self.character_info.get(char, {})
+                total_strokes += char_info.get('strokes', 0)  # 修正：stroke -> strokes
+            word_stroke_list.append((word, total_strokes))
+        
+        # 按总笔画数排序
+        word_stroke_list.sort(key=lambda x: x[1])
+        return [item[0] for item in word_stroke_list]
+    
+    def get_words_sorted_by_radical(self) -> List[str]:
+        """获取按部首排序的词汇列表（使用预计算缓存）"""
+        if self.sorted_words_by_radical:
+            # 使用预计算的排序数据，直接返回词汇列表
+            return [item[0] for item in self.sorted_words_by_radical]
+        
+        # 兜底：如果缓存数据不存在，则实时计算（但会很慢）
+        print("[WARNING] 部首排序缓存不存在，实时计算中...")
+        word_radical_list = []
+        for word in self.word_pinyin_pairs:
+            if word:
+                first_char = word[0]
+                char_info = self.character_info.get(first_char, {})
+                radical = char_info.get('radical', '')
+                word_radical_list.append((word, radical))
+        
+        # 按首字部首排序
+        word_radical_list.sort(key=lambda x: x[1])
+        return [item[0] for item in word_radical_list]
+    
+    def filter_words_by_stroke_count_fast(self, stroke_count: int) -> List[str]:
+        """快速筛选指定笔画数的词汇（首字）"""
+        if stroke_count in self.words_by_stroke_count:
+            return self.words_by_stroke_count[stroke_count]
+        
+        # 如果索引中没有，实时计算
+        matching_words = []
+        for word in self.word_pinyin_pairs:
+            if word:
+                first_char = word[0]
+                char_info = self.character_info.get(first_char, {})
+                if char_info.get('strokes', 0) == stroke_count:  # 使用strokes字段
+                    matching_words.append(word)
+        
+        return matching_words
+    
+    def filter_words_by_radical_fast(self, radical: str) -> List[str]:
+        """快速筛选指定部首的词汇（首字）"""
+        if radical in self.words_by_radical:
+            return self.words_by_radical[radical]
+        
+        # 如果索引中没有，实时计算
+        matching_words = []
+        for word in self.word_pinyin_pairs:
+            if word:
+                first_char = word[0]
+                char_info = self.character_info.get(first_char, {})
+                if char_info.get('radical', '') == radical:
+                    matching_words.append(word)
+        
+        return matching_words
+    
+    def filter_words_by_tone_fast(self, tone: str) -> List[str]:
+        """快速筛选指定声调的词汇（首字）"""
+        if tone in self.words_by_tone:
+            return self.words_by_tone[tone]
+        
+        # 如果索引中没有，实时计算
+        matching_words = []
+        for word in self.word_pinyin_pairs:
+            pinyins = self.get_word_pinyin(word)
+            if pinyins and len(pinyins) > 0:
+                first_pinyin = pinyins[0]
+                word_tone = self._extract_tone_from_pinyin(first_pinyin)
+                if word_tone == tone:
+                    matching_words.append(word)
+        
+        return matching_words
+    
+    def _extract_tone_from_pinyin(self, pinyin: str) -> str:
+        """从拼音中提取声调"""
+        if not pinyin:
+            return '5'
+        
+        # 处理字符串格式的拼音列表
+        if isinstance(pinyin, str) and pinyin.startswith('[') and pinyin.endswith(']'):
+            try:
+                import ast
+                pinyin_list = ast.literal_eval(pinyin)
+                if isinstance(pinyin_list, list) and pinyin_list:
+                    pinyin = pinyin_list[0]
+            except:
+                pinyin = pinyin.strip("[]'\"")
+        
+        # 声调符号映射
+        tone_map = {
+            'ā': '1', 'á': '2', 'ǎ': '3', 'à': '4',
+            'ē': '1', 'é': '2', 'ě': '3', 'è': '4',
+            'ī': '1', 'í': '2', 'ǐ': '3', 'ì': '4',
+            'ō': '1', 'ó': '2', 'ǒ': '3', 'ò': '4',
+            'ū': '1', 'ú': '2', 'ǔ': '3', 'ù': '4',
+            'ǖ': '1', 'ǘ': '2', 'ǚ': '3', 'ǜ': '4',
+            'ń': '2', 'ň': '3', 'ǹ': '4',
+            'ḿ': '2'
+        }
+        
+        # 清理拼音字符串
+        clean_pinyin = str(pinyin).strip()
+        
+        for char in clean_pinyin:
+            if char in tone_map:
+                return tone_map[char]
+        
+        # 如果没有找到声调符号，检查是否有数字声调
+        import re
+        tone_match = re.search(r'(\d)$', clean_pinyin)
+        if tone_match:
+            return tone_match.group(1)
+        
+        return '5'  # 轻声或无声调
     
     def get_stats(self) -> Dict[str, int]:
         """获取统计信息"""

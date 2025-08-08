@@ -6,19 +6,19 @@
 
 如何使用？如果本地没有 cache/ 文件夹就先运行 `vocabulary_preprocessor.py`，然后直接运行 `start_app.py` 就行！
 
-（注意，如果要用词意查询功能，请自行用 `compute_embeddings.py` 计算）
+（注意，如果要用词意查询功能，请自行用下一个 Qwen3-Embedding-0.6B 的 docker，然后跑 `docker run --gpus all -p 8080:80 ghcr.io/huggingface/text-embeddings-inference:1.8 --model-id Qwen/Qwen3-Embedding-0.6B` 启动它。）
 
 目前支持：
 
 - 对角线提取：给定带缺的 feeder 和 index（支持 shuffle feeder 和 index 的顺序），提取所有可能的单词；
 - 单词查询：单纯的通配符匹配、按照编辑距离查询、按照给定串作为子串查询；
-- 近义词查询：使用了 [Qwen3-Embedding-0.6B](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B) 模型来计算词的 embedding，然后做 knn 查询，我是用了 Qwen3 的 docker 来做，也就是 `docker run --gpus all -p 8080:80 ghcr.io/huggingface/text-embeddings-inference:1.8 --model-id Qwen/Qwen3-Embedding-0.6B` 来跑，同样也加上了字数限制和汉字的限制。
+- 近义词查询：使用了 [Qwen3-Embedding-0.6B](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B) 模型来计算词的 embedding，然后做 knn 查询。除了词意限制，同样也加上了字数限制和每一个字的限制。
+- 和同开弥 solver：支持手动加入限制，限制可以明确位置，也可以作通配，最后输出会按照符合限制条数降序输出；
 - 汉字查询：根据笔画数、声母、韵母、声调、偏旁、“第x笔是xxx”等信息查询，结果按照释义长度降序排序。
 
 TODO：
 
 - 对角线提取效率优化；
-- 词语查询中具体某一画是 xx 的限制还没写对；
 - 成语查询；
 - `ue/ve` 可能区分上有点问题；
 - 常用提取工具。

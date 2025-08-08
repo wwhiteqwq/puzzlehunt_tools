@@ -9,10 +9,10 @@ def safe_process_synonym_search(word: str, k: int = 10, final_filter: str = "") 
     try:
         # 最优先：尝试使用Qwen同义词服务（最新最准确）
         from qwen_synonym_searcher import process_synonym_search as qwen_process_synonym_search
-        from qwen_synonym_searcher import QwenSynonymSearcher
+        from qwen_synonym_searcher import QwenSynonymSearcherV3
         
         # 检测Qwen服务是否可用
-        qwen_searcher = QwenSynonymSearcher()
+        qwen_searcher = QwenSynonymSearcherV3()
         if qwen_searcher.qwen_available:
             print("🚀 使用Qwen3-Embedding同义词服务（最新模型）")
             return qwen_process_synonym_search(word, k, final_filter)
@@ -97,7 +97,7 @@ def safe_process_similarity_comparison_v3(word1: str, word2: str) -> str:
 def process_similarity_comparison_v3(word1: str, word2: str) -> str:
     """处理相似度比较 - V3版本"""
     try:
-        from qwen_synonym_searcher_v3 import QwenSynonymSearcherV3
+        from qwen_synonym_searcher import QwenSynonymSearcherV3
         searcher = QwenSynonymSearcherV3()
         
         if not searcher.qwen_available:
@@ -183,9 +183,9 @@ def process_similarity_comparison_v3(word1: str, word2: str) -> str:
 def process_qwen_synonym_query(word: str, k: int, char1_final: str, char2_final: str, char3_final: str, char4_final: str) -> str:
     """处理Qwen同义词查询 - 使用V3优化版本"""
     try:
-        from qwen_synonym_searcher_v2 import QwenSynonymSearcher
+        from qwen_synonym_searcher import QwenSynonymSearcherV3
         
-        searcher = QwenSynonymSearcher()
+        searcher = QwenSynonymSearcherV3()
         if not searcher.qwen_available:
             return "❌ Qwen embedding服务不可用，请启动服务后重试"
         
@@ -232,8 +232,8 @@ def check_synonym_status() -> str:
     """检查同义词功能状态"""
     try:
         # 检查Qwen服务状态（最优先）
-        from qwen_synonym_searcher import QwenSynonymSearcher
-        qwen_searcher = QwenSynonymSearcher()
+        from qwen_synonym_searcher import QwenSynonymSearcherV3
+        qwen_searcher = QwenSynonymSearcherV3()
         
         if qwen_searcher.qwen_available:
             return "✅ Qwen3-Embedding-0.6B服务已就绪（最新模型，1024维向量）"

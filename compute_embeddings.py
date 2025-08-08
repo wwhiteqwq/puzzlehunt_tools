@@ -148,7 +148,7 @@ def main():
     print("=" * 60)
     
     # 配置
-    ci_file_path = 'chinese/chinese-xinhua/data/ci.json'
+    ci_file_path = 'ci.json'
     output_dir = 'qwen_embeddings'  # 使用新的目录名
     batch_size = 20  # Qwen服务的最大批次32，我们设置更小以确保稳定
     
